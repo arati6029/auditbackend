@@ -31,19 +31,22 @@ pipeline {
         }
         
         stage('Test') {
-    steps {
-        script {
-            echo 'Running tests...'
-            sh 'mvn test -Dspring.test.skip=true -Dmaven.test.failure.ignore=true'
+            steps {
+                script {
+                    // Run tests
+                    echo 'Running tests...'
+                    // Example: sh 'mvn test' or 'npm test'
+                     sh 'mvn test -Dspring.profiles.active=test'
+                }
+            }
+            post {
+                always {
+                    // Archive test results
+                    junit '**/target/surefire-reports/*.xml' // Update path based on your test reports
+                    archiveArtifacts '**/target/surefire-reports/**'
+                }
+            }
         }
-    }
-    post {
-        always {
-            junit '**/target/surefire-reports/*.xml'
-            archiveArtifacts '**/target/surefire-reports/**'
-        }
-    }
-}
         
         stage('Build Docker Image') {
             when {
