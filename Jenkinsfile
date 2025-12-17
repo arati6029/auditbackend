@@ -1,6 +1,9 @@
 pipeline {
     agent any
-    
+    tools {
+        // Make sure Maven is configured in Jenkins Global Tool Configuration
+        maven 'M3'  // This should match the Maven installation name in Jenkins
+    }
     environment {
         REGISTRY = "docker.io"
         DOCKER_USER = "arati6029"
