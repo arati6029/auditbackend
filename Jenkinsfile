@@ -48,9 +48,9 @@ pipeline {
         }
         
         stage('Build Docker Image') {
-            when {
-                expression { env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' }
-            }
+            // when {
+            //     expression { env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' }
+            // }
             steps {
                 script {
                     // Build Docker image
@@ -61,9 +61,9 @@ pipeline {
         }
         
         stage('Deploy') {
-            when {
-                expression { env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' }
-            }
+            // when {
+            //     expression { env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' }
+            // }
             steps {
                 script {
                     // Deploy your application
