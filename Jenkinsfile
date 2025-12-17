@@ -33,12 +33,14 @@ pipeline {
                     // Run tests
                     echo 'Running tests...'
                     // Example: sh 'mvn test' or 'npm test'
+                     sh 'mvn test'
                 }
             }
             post {
                 always {
                     // Archive test results
                     junit '**/target/surefire-reports/*.xml' // Update path based on your test reports
+                    archiveArtifacts '**/target/surefire-reports/**'
                 }
             }
         }
