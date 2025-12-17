@@ -1,5 +1,10 @@
 pipeline {
-    agent any
+    agent { 
+        docker {
+            image 'maven:3.8.4-jdk-11'  // Or your preferred Maven image
+            args '-v /var/run/docker.sock:/var/run/docker.sock'  // Mount Docker socket
+                }
+    }
     tools {
         maven 'M3'
     }
