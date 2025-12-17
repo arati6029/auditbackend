@@ -36,7 +36,11 @@ pipeline {
                     // Run tests
                     echo 'Running tests...'
                     // Example: sh 'mvn test' or 'npm test'
-                     sh 'mvn test -Dspring.profiles.active=test'
+                     sh '''
+    mvn clean test -Dspring.profiles.active=test \
+        -Dspring.datasource.url=jdbc:h2:mem:testdb \
+        -Dtestcontainers.enabled=false
+'''
                 }
             }
             post {
