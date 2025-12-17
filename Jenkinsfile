@@ -33,22 +33,17 @@ pipeline {
         stage('Test') {
             steps {
                 script {
-                    // Run tests
-                    echo 'Running tests...'
-                    // Example: sh 'mvn test' or 'npm test'
-                     sh '''
-    mvn clean test -Dspring.profiles.active=test \
-        -Dspring.datasource.url=jdbc:h2:mem:testdb \
-        -Dtestcontainers.enabled=false
-'''
-                }
-            }
-            post {
-                always {
-                    // Archive test results
-                    junit '**/target/surefire-reports/*.xml' // Update path based on your test reports
-                    archiveArtifacts '**/target/surefire-reports/**'
-                }
+            sh '''
+                # Use H2 in-memory database for tests
+                mvn clean test -Dspring.profiles.active=test \
+                    -Dspring.datasource.url=jdbc:h2:mem:testdb \
+                    -Dspring.datasource.driver-class-name=org.h2.Driver \
+                    -Dspring.datasource.username=sa \
+                    -Dspring.datasource.password= \
+                    -Dspring.jpa.database-platform=org.hibernate.dialect.H2Dialect \
+                    -Dtestcontainers.enabled=false
+            '''
+        }
             }
         }
         
