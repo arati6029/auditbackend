@@ -14,6 +14,9 @@ pipeline {
         // Timeout after 30 minutes
         timeout(time: 30, unit: 'MINUTES')
     }
+    tools {
+        maven 'M3'
+    }
 
     stages {
         stage('Checkout') {
