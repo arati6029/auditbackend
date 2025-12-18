@@ -44,7 +44,7 @@ pipeline {
         stage('Build Application') {
             steps {
                 script {
-                    // Using maven tool configured in Jenkins
+                    
                     sh 'mvn clean package -DskipTests'
                 }
             }
