@@ -4,8 +4,6 @@ pipeline {
     environment {
         // Docker Compose project name to avoid conflicts
         COMPOSE_PROJECT_NAME = "auditapp-${BUILD_NUMBER}"
-        // Set Docker host to use the host's Docker daemon
-        DOCKER_HOST = 'unix:///var/run/docker.sock'
         // Set Docker Compose file explicitly
         COMPOSE_FILE = 'docker-compose.yml'
     }
@@ -14,6 +12,7 @@ pipeline {
         // Timeout after 30 minutes
         timeout(time: 30, unit: 'MINUTES')
     }
+    
     tools {
         maven 'M3'
     }
@@ -24,12 +23,14 @@ pipeline {
                 checkout scm
                 echo '✅ Repository checked out successfully'
                 
-                // Verify Docker and Docker Compose are available
+                // Verify system information
                 sh '''
                     echo "=== System Information ==="
                     echo "Working directory: $(pwd)"
-                    echo "Docker version:"
-                    docker --version || echo "Docker not found"
+                    echo "User: $(whoami)"
+                    echo "Groups: $(groups)"
+                    echo "Docker info:"
+                    docker info || echo "Docker not accessible"
                     echo "Docker Compose version:"
                     docker-compose --version || echo "Docker Compose not found"
                 '''
@@ -47,25 +48,70 @@ pipeline {
             }
         }
 
-        stage('Build and Start Containers') {
+        stage('Docker Operations') {
             steps {
-                echo '🐳 Building and starting Docker containers...'
-                sh '''
-                    # Stop and remove any existing containers
-                    docker-compose down --remove-orphans || true
+                script {
+                    // Create docker group and add Jenkins user if needed
+                    sh '''#!/bin/bash
+                        set +x
+                        
+                        echo "=== Docker Setup ==="
+                        
+                        # Check if we can access Docker
+                        if docker info >/dev/null 2>&1; then
+                            echo "✅ Docker is accessible"
+                        else
+                            echo "⚠️  Cannot access Docker daemon. Trying to fix permissions..."
+                            
+                            # Create docker group if it doesn't exist
+                            if ! grep -q docker /etc/group; then
+                                echo "Creating docker group..."
+                                sudo groupadd docker || true
+                            fi
+                            
+                            # Add Jenkins user to docker group
+                            echo "Adding Jenkins user to docker group..."
+                            sudo usermod -aG docker jenkins || true
+                            
+                            # Update group membership
+                            newgrp docker || true
+                            
+                            # Restart Docker service
+                            echo "Restarting Docker service..."
+                            sudo systemctl restart docker || true
+                            
+                            # Verify
+                            if docker info >/dev/null 2>&1; then
+                                echo "✅ Docker is now accessible"
+                            else
+                                echo "❌ Still cannot access Docker. Please check permissions manually."
+                                echo "Try running: sudo chmod 666 /var/run/docker.sock"
+                                exit 1
+                            fi
+                        fi
+                        
+                        # Show Docker info
+                        docker info
+                    '''
                     
-                    # Build and start containers in detached mode
-                    docker-compose up --build -d
-                    
-                    # Wait for services to be ready
-                    echo "Waiting for services to be ready..."
-                    sleep 10
-                    
-                    # Show running containers
-                    echo "=== Running Containers ==="
-                    docker-compose ps
-                '''
-                echo '✅ Containers started successfully'
+                    // Now run docker-compose commands
+                    sh '''
+                        echo "=== Running Docker Compose ==="
+                        docker-compose --version
+                        
+                        # Stop and remove any existing containers
+                        echo "Cleaning up existing containers..."
+                        docker-compose down --remove-orphans || true
+                        
+                        # Build and start containers
+                        echo "Building and starting containers..."
+                        docker-compose up --build -d
+                        
+                        # Show running containers
+                        echo "=== Running Containers ==="
+                        docker-compose ps
+                    '''
+                }
             }
         }
 
@@ -122,8 +168,13 @@ pipeline {
             script {
                 echo "Cleaning up Docker resources..."
                 sh '''
-                    docker-compose down --remove-orphans || true
-                    docker system prune -f || true
+                    # Try with sudo if needed
+                    docker-compose down --remove-orphans 2>/dev/null || \
+                    sudo docker-compose down --remove-orphans 2>/dev/null || true
+                    
+                    # Clean up Docker resources
+                    docker system prune -f 2>/dev/null || \
+                    sudo docker system prune -f 2>/dev/null || true
                 '''
             }
             
