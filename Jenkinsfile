@@ -13,8 +13,6 @@ pipeline {
     options {
         // Timeout after 30 minutes
         timeout(time: 30, unit: 'MINUTES')
-        // Clean workspace after build
-        cleanWs()
     }
 
     stages {
@@ -130,7 +128,11 @@ pipeline {
             junit '**/target/surefire-reports/**/*.xml'
             
             // Clean workspace
-            cleanWs()
+            sh '''
+                # Clean up workspace
+                echo "Cleaning workspace..."
+                find . -mindepth 1 -delete || true
+            '''
         }
         
         success {
