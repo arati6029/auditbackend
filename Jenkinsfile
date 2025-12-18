@@ -35,7 +35,7 @@ pipeline {
                         docker system prune -f || true
                     '''
                     
-                    // Verify Docker is working
+                   
                     sh 'docker --version'
                 }
             }
