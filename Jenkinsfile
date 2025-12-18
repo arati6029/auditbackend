@@ -28,7 +28,7 @@ pipeline {
         stage('Setup Docker') {
             steps {
                 script {
-                    // Clean up any existing containers/images
+                    
                     sh '''
                         docker stop auditapplication || true
                         docker rm auditapplication || true
