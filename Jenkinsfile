@@ -3,7 +3,21 @@ pipeline {
     tools {
         maven 'M3'
     }
+     environment {
+        // Override DOCKER_HOST to use Docker socket
+        DOCKER_HOST = 'unix:///var/run/docker.sock'
+    }
     stages {
+        stage('Setup Docker') {
+            steps {
+                sh '''
+                    echo "Current DOCKER_HOST: ${DOCKER_HOST}"
+                    echo "Testing Docker connection..."
+                    docker version
+                    docker-compose --version
+                '''
+            }
+        }
         stage('Checkout Code') {
             steps {
                 checkout scm
