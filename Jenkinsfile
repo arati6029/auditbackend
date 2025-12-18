@@ -1,149 +1,151 @@
 pipeline {
     agent any
     
-    tools {
-        maven 'M3'
-    }
-    
-    // Remove or override DOCKER_HOST environment variable
     environment {
+        // Docker Compose project name to avoid conflicts
+        COMPOSE_PROJECT_NAME = "auditapp-${BUILD_NUMBER}"
+        // Set Docker host to use the host's Docker daemon
         DOCKER_HOST = 'unix:///var/run/docker.sock'
+        // Set Docker Compose file explicitly
+        COMPOSE_FILE = 'docker-compose.yml'
     }
-    
+
+    options {
+        // Timeout after 30 minutes
+        timeout(time: 30, unit: 'MINUTES')
+        // Clean workspace after build
+        cleanWs()
+    }
+
     stages {
-        stage('Checkout Code') {
+        stage('Checkout') {
             steps {
                 checkout scm
-                echo '✅ Code checked out successfully'
+                echo '✅ Repository checked out successfully'
+                
+                // Verify Docker and Docker Compose are available
+                sh '''
+                    echo "=== System Information ==="
+                    echo "Working directory: $(pwd)"
+                    echo "Docker version:"
+                    docker --version || echo "Docker not found"
+                    echo "Docker Compose version:"
+                    docker-compose --version || echo "Docker Compose not found"
+                '''
             }
         }
-        
-        stage('Build Spring Boot App') {
+
+        stage('Build Application') {
             steps {
+                echo '🔨 Building Spring Boot application...'
                 sh 'mvn clean package -DskipTests'
-                echo '✅ Spring Boot application built successfully'
-            }
-            post {
-                success {
-                    archiveArtifacts 'target/*.jar'
-                }
+                echo '✅ Application built successfully'
+                
+                // Archive the built JAR file
+                archiveArtifacts 'target/*.jar'
             }
         }
-        
-        stage('Build Docker Image') {
+
+        stage('Build and Start Containers') {
             steps {
+                echo '🐳 Building and starting Docker containers...'
                 sh '''
-                    # Use docker build instead of docker-compose build
-                    docker build -t audit-application:latest .
-                    echo "✅ Docker image built successfully"
-                '''
-            }
-        }
-        
-        stage('Stop Existing Containers') {
-            steps {
-                sh '''
-                    # Stop and remove existing containers
-                    docker stop audit-application mysql-db 2>/dev/null || true
-                    docker rm audit-application mysql-db 2>/dev/null || true
+                    # Stop and remove any existing containers
+                    docker-compose down --remove-orphans || true
                     
-                    # Remove network if exists
-                    docker network rm audit-network 2>/dev/null || true
-                '''
-                echo '✅ Cleaned up existing containers'
-            }
-        }
-        
-        stage('Run Containers') {
-            steps {
-                sh '''
-                    # Create network
-                    docker network create audit-network 2>/dev/null || true
+                    # Build and start containers in detached mode
+                    docker-compose up --build -d
                     
-                    # Run MySQL container
-                    docker run -d \
-                      --name mysql-db \
-                      --network audit-network \
-                      -e MYSQL_ROOT_PASSWORD=root \
-                      -e MYSQL_DATABASE=auditDb \
-                      -p 3307:3306 \
-                      -v mysql-data:/var/lib/mysql \
-                      mysql:8.0
+                    # Wait for services to be ready
+                    echo "Waiting for services to be ready..."
+                    sleep 10
                     
-                    echo "✅ MySQL container started"
-                    
-                    # Wait for MySQL to be ready
-                    sleep 20
-                    
-                    # Run Spring Boot application container
-                    docker run -d \
-                      --name audit-application \
-                      --network audit-network \
-                      -p 8081:8080 \
-                      -e SPRING_DATASOURCE_URL=jdbc:mysql://mysql-db:3306/auditDb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC \
-                      -e SPRING_DATASOURCE_USERNAME=root \
-                      -e SPRING_DATASOURCE_PASSWORD=root \
-                      -e JWT_SECRET_KEY=bXlTdXBlclNlY3JldEtleTEyMzQ1Njc4OTAxMjM0NTY3OA== \
-                      -e JWT_EXPIRATION_TIME=3600000 \
-                      audit-application:latest
-                    
-                    echo "✅ Application container started"
-                    sleep 20
+                    # Show running containers
+                    echo "=== Running Containers ==="
+                    docker-compose ps
                 '''
                 echo '✅ Containers started successfully'
             }
         }
-        
+
         stage('Verify Deployment') {
             steps {
-                sh '''
-                    echo "Checking if containers are running..."
-                    docker ps --filter "name=audit"
+                echo '🔍 Verifying deployment...'
+                script {
+                    // Wait for application to be ready with timeout
+                    def maxAttempts = 10
+                    def attempt = 1
                     
-                    echo "Checking application health..."
-                    max_attempts=10
-                    attempt=1
-                    
-                    while [ $attempt -le $max_attempts ]; do
-                        if curl -f http://localhost:8081/actuator/health 2>/dev/null; then
-                            echo "✅ Application is healthy!"
-                            exit 0
-                        fi
-                        
-                        echo "Attempt $attempt/$max_attempts: Waiting for application..."
-                        sleep 10
-                        attempt=$((attempt+1))
-                    done
-                    
-                    echo "❌ Application health check failed"
-                    docker logs audit-application
-                    exit 1
-                '''
-                echo '✅ Deployment verified successfully'
+                    while (attempt <= maxAttempts) {
+                        try {
+                            def health = sh(
+                                script: 'curl -s -f http://localhost:8081/actuator/health || echo "unhealthy"',
+                                returnStdout: true
+                            ).trim()
+                            
+                            if (health.contains('"status":"UP"')) {
+                                echo "✅ Application is healthy!"
+                                break
+                            }
+                            
+                            if (attempt >= maxAttempts) {
+                                error("❌ Application did not become healthy after ${maxAttempts} attempts")
+                            }
+                            
+                            echo "⏳ Waiting for application to be ready (attempt ${attempt}/${maxAttempts})..."
+                            sleep 10
+                            attempt++
+                            
+                        } catch (Exception e) {
+                            if (attempt >= maxAttempts) {
+                                echo "❌ Error checking application health: ${e.message}"
+                                echo "=== Container logs ==="
+                                sh 'docker-compose logs --tail=50'
+                                error("Failed to verify deployment")
+                            }
+                            sleep 10
+                            attempt++
+                        }
+                    }
+                }
             }
         }
     }
-    
+
     post {
         always {
-            echo "=== Deployment Summary ==="
-            sh '''
-                echo "Application URL: http://localhost:8081"
-                echo "MySQL Port: 3307"
-                echo ""
-                echo "To view application logs: docker logs audit-application"
-                echo "To view database logs: docker logs mysql-db"
-                echo "To stop all: docker stop audit-application mysql-db"
-            '''
+            echo "=== Build Status: ${currentBuild.currentResult} ==="
+            echo "Build URL: ${BUILD_URL}"
+            
+            // Always clean up containers
+            script {
+                echo "Cleaning up Docker resources..."
+                sh '''
+                    docker-compose down --remove-orphans || true
+                    docker system prune -f || true
+                '''
+            }
+            
+            // Archive test results if any
+            junit '**/target/surefire-reports/**/*.xml'
+            
+            // Clean workspace
             cleanWs()
         }
         
         success {
-            echo '🎉 Pipeline completed successfully!'
+            echo "🎉 Pipeline executed successfully!"
+            echo "Application URL: http://localhost:8081"
+            echo "MySQL Port: 3307"
+            echo ""
+            echo "To view logs: docker-compose logs -f"
+            echo "To stop: docker-compose down"
         }
         
         failure {
-            echo '❌ Pipeline failed!'
+            echo "❌ Pipeline failed!"
+            echo "=== Last 50 lines of logs ==="
+            sh 'docker-compose logs --tail=50 || true'
         }
     }
 }
