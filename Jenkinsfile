@@ -1,10 +1,5 @@
 pipeline {
-    agent {
-        docker {
-            image 'maven:3.8.4-openjdk-11'
-            args '-v /var/run/docker.sock:/var/run/docker.sock'
-        }
-    }
+    agent any
     
     options {
         timestamps()
@@ -17,75 +12,27 @@ pipeline {
         IMAGE_NAME = "auditapplication-app"
         CONTAINER_NAME = "auditapplication"
         DOCKER_IMAGE = "${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
-        // For WSL Docker integration
-        DOCKER_HOST = "tcp://localhost:2375"
     }
     
     stages {
         stage('Checkout') {
             steps {
-                echo '🔍 Starting Checkout stage: Cloning repository...'
+                echo '🔍 Starting Checkout stage...'
                 checkout scm
                 echo '✅ Repository cloned successfully'
             }
         }
         
-        stage('Setup Environment') {
+        stage('Verify Workspace') {
             steps {
                 script {
-                    echo "Checking Docker setup..."
-                    
-                    // Check if we're in WSL
-                    def isWSL = sh(script: 'uname -a | grep -i microsoft', returnStatus: true) == 0
-                    
-                    if (isWSL) {
-                        echo "Running in WSL environment"
-                        
-                        // Method 1: Try Docker Desktop integration
-                        sh '''
-                            echo "Attempting to connect to Docker Desktop..."
-                            # Check if Docker Desktop socket is exposed
-                            if [ -S /mnt/wsl/docker-desktop/docker-desktop.sock ]; then
-                                echo "Using Docker Desktop socket"
-                                export DOCKER_HOST="unix:///mnt/wsl/docker-desktop/docker-desktop.sock"
-                            elif [ -S /var/run/docker.sock ]; then
-                                echo "Using Docker socket"
-                                export DOCKER_HOST="unix:///var/run/docker.sock"
-                            else
-                                # Try to expose Docker Desktop port
-                                echo "Setting up Docker Desktop TCP connection"
-                                powershell.exe -Command "Start-Process -WindowStyle Hidden -FilePath 'docker' -ArgumentList 'context', 'create', 'wsl', '--docker', 'host=tcp://localhost:2375'"
-                                sleep 5
-                            fi
-                        '''
-                        
-                        // Test Docker connection
-                        def dockerTest = sh(script: '''
-                            docker version 2>&1 || echo "Docker not available"
-                            docker ps 2>&1 || echo "Cannot list containers"
-                        ''', returnStatus: true)
-                        
-                        if (dockerTest != 0) {
-                            echo "⚠️ Docker not accessible. Starting Docker service..."
-                            // Try to start Docker Desktop from WSL
-                            sh '''
-                                # Try to start Docker Desktop
-                                powershell.exe -Command "Start-Process -WindowStyle Hidden -FilePath 'C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe'"
-                                echo "Waiting for Docker Desktop to start..."
-                                sleep 30
-                            '''
-                        }
-                    }
-                    
-                    // Final Docker check
                     sh '''
-                        echo "=== Docker Status ==="
-                        docker version || echo "❌ Docker not available"
-                        echo "=== System Info ==="
-                        uname -a
-                        echo "=== Current Directory ==="
+                        echo "=== Workspace Contents ==="
                         pwd
                         ls -la
+                        echo "=== Maven Status ==="
+                        which mvn || echo "Maven not in PATH"
+                        java -version
                     '''
                 }
             }
@@ -93,157 +40,252 @@ pipeline {
         
         stage('Build Application') {
             steps {
-                echo '🔨 Starting Build: Compiling application...'
+                echo '🔨 Building application with Maven...'
                 script {
-                    // Check for Maven wrapper first
+                    // Use Maven wrapper if available, otherwise use system Maven
                     if (fileExists('mvnw')) {
                         sh 'chmod +x mvnw && ./mvnw clean package -DskipTests'
                     } else {
-                        sh 'mvn clean package -DskipTests'
+                        // Install Maven if not available
+                        sh '''
+                            if ! command -v mvn >/dev/null 2>&1; then
+                                echo "Installing Maven..."
+                                sudo apt-get update -qq
+                                sudo apt-get install -y maven
+                            fi
+                            mvn clean package -DskipTests
+                        '''
                     }
                 }
                 echo '✅ Build completed successfully'
-                
-                // Archive the JAR file
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
             }
         }
         
-        stage('Create Dockerfile if missing') {
-            when {
-                expression { !fileExists('Dockerfile') }
-            }
+        stage('Create Docker Assets') {
             steps {
+                echo '📝 Creating Docker build assets...'
                 script {
-                    echo '📝 Creating Dockerfile...'
                     sh '''
+                        echo "=== Creating Dockerfile ==="
                         cat > Dockerfile << 'EOF'
+                        # Use multi-stage build
+                        FROM maven:3.8.4-openjdk-11-slim AS builder
+                        WORKDIR /app
+                        COPY pom.xml .
+                        RUN mvn dependency:go-offline
+                        COPY src ./src
+                        RUN mvn clean package -DskipTests
+
                         FROM openjdk:11-jre-slim
                         WORKDIR /app
-                        COPY target/*.jar app.jar
+                        COPY --from=builder /app/target/*.jar app.jar
                         EXPOSE 8080
                         ENTRYPOINT ["java", "-jar", "app.jar"]
                         EOF
                         
                         echo "Dockerfile created:"
                         cat Dockerfile
+                        
+                        echo "=== Creating .dockerignore ==="
+                        cat > .dockerignore << 'EOF'
+                        **/.git
+                        **/.mvn
+                        **/target
+                        **/node_modules
+                        **/dist
+                        **/*.iml
+                        **/.idea
+                        **/*.log
+                        EOF
                     '''
                 }
+                echo '✅ Docker assets created'
             }
         }
         
-        stage('Build Docker Image') {
+        stage('Save Artifacts') {
             steps {
-                echo '🐳 Building Docker image...'
+                echo '💾 Saving build artifacts...'
                 script {
-                    // Verify Docker is working
-                    sh '''
-                        echo "=== Docker Info Before Build ==="
-                        docker version || { echo "Docker not available"; exit 1; }
-                        docker images
-                    '''
+                    // Archive the JAR file
+                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
                     
-                    // Build the image
-                    sh """
+                    // Save Dockerfile
+                    archiveArtifacts artifacts: 'Dockerfile', fingerprint: true
+                    
+                    // Create a build info file
+                    sh '''
+                        echo "Build Information" > build-info.txt
+                        echo "================" >> build-info.txt
+                        echo "Build Number: ${BUILD_NUMBER}" >> build-info.txt
+                        echo "Branch: ${BRANCH_NAME}" >> build-info.txt
+                        echo "Timestamp: $(date)" >> build-info.txt
+                        echo "JAR File: $(ls target/*.jar)" >> build-info.txt
+                        echo "Commit: $(git rev-parse HEAD)" >> build-info.txt
+                    '''
+                    archiveArtifacts artifacts: 'build-info.txt', fingerprint: true
+                }
+                echo '✅ Artifacts saved successfully'
+            }
+        }
+        
+        stage('Create Docker Build Script') {
+            steps {
+                echo '📦 Creating Docker build script...'
+                script {
+                    sh '''
+                        echo "=== Creating Docker build script ==="
+                        cat > build-docker.sh << 'EOF'
+                        #!/bin/bash
+                        echo "Docker Build Script"
+                        echo "=================="
+                        
+                        # Check if Docker is available
+                        if ! command -v docker >/dev/null 2>&1; then
+                            echo "ERROR: Docker is not installed or not in PATH"
+                            echo "To install Docker on Ubuntu/WSL:"
+                            echo "1. sudo apt-get update"
+                            echo "2. sudo apt-get install docker.io"
+                            echo "3. sudo usermod -aG docker $USER"
+                            echo "4. newgrp docker"
+                            exit 1
+                        fi
+                        
+                        # Check Docker daemon
+                        if ! docker info >/dev/null 2>&1; then
+                            echo "ERROR: Docker daemon is not running"
+                            echo "For WSL2 with Docker Desktop:"
+                            echo "1. Ensure Docker Desktop is running on Windows"
+                            echo "2. In Docker Desktop Settings:"
+                            echo "   - Enable WSL Integration"
+                            echo "   - Expose daemon on tcp://localhost:2375"
+                            echo "3. Export: export DOCKER_HOST=tcp://localhost:2375"
+                            exit 1
+                        fi
+                        
+                        # Build parameters
+                        DOCKER_USER="arati6029"
+                        IMAGE_NAME="auditapplication-app"
+                        BUILD_NUMBER="$1"
+                        
+                        if [ -z "$BUILD_NUMBER" ]; then
+                            BUILD_NUMBER="latest"
+                        fi
+                        
+                        DOCKER_IMAGE="${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
+                        
+                        echo "Building Docker image: ${DOCKER_IMAGE}"
+                        echo "Docker version:"
+                        docker version
+                        
+                        # Build the image
                         docker build -t ${DOCKER_IMAGE} .
+                        
+                        # Tag as latest
                         docker tag ${DOCKER_IMAGE} ${DOCKER_USER}/${IMAGE_NAME}:latest
-                    """
-                    
-                    // List built images
-                    sh '''
-                        echo "=== Docker Images After Build ==="
-                        docker images | grep auditapplication || docker images
+                        
+                        echo "Images created:"
+                        docker images | grep ${IMAGE_NAME}
+                        
+                        echo "To run the container:"
+                        echo "  docker run -d -p 8080:8080 --name auditapplication ${DOCKER_IMAGE}"
+                        
+                        echo "To push to Docker Hub:"
+                        echo "  docker login"
+                        echo "  docker push ${DOCKER_IMAGE}"
+                        echo "  docker push ${DOCKER_USER}/${IMAGE_NAME}:latest"
+                        EOF
+                        
+                        chmod +x build-docker.sh
+                        
+                        echo "Script created. To build Docker image manually:"
+                        echo "  ./build-docker.sh ${BUILD_NUMBER}"
                     '''
+                    archiveArtifacts artifacts: 'build-docker.sh', fingerprint: true
                 }
-                echo '✅ Docker image built successfully'
+                echo '✅ Docker build script created'
             }
         }
         
-        stage('Test Docker Image') {
+        stage('Create Deploy Script') {
             steps {
-                echo '🧪 Testing Docker image...'
+                echo '🚀 Creating deployment script...'
                 script {
                     sh '''
-                        # Test run container
-                        docker run --name test-container -d -p 8081:8080 ${DOCKER_USER}/${IMAGE_NAME}:latest || true
+                        echo "=== Creating deployment script ==="
+                        cat > deploy.sh << 'EOF'
+                        #!/bin/bash
+                        echo "Deployment Script"
+                        echo "================"
                         
-                        # Wait and check health
-                        sleep 10
+                        CONTAINER_NAME="auditapplication"
+                        DOCKER_IMAGE="arati6029/auditapplication-app:latest"
                         
-                        # Check if container is running
-                        docker ps | grep test-container || echo "Container might have stopped"
-                        
-                        # Clean up test container
-                        docker stop test-container 2>/dev/null || true
-                        docker rm test-container 2>/dev/null || true
-                    '''
-                }
-                echo '✅ Docker image test completed'
-            }
-        }
-        
-        stage('Push to Docker Hub') {
-            when {
-                branch 'main'
-            }
-            steps {
-                echo '📤 Pushing to Docker Hub...'
-                script {
-                    withCredentials([usernamePassword(
-                        credentialsId: 'docker-hub-credentials',
-                        usernameVariable: 'DOCKER_USERNAME',
-                        passwordVariable: 'DOCKER_PASSWORD'
-                    )]) {
-                        sh """
-                            echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin
-                            docker push ${DOCKER_IMAGE}
-                            docker push ${DOCKER_USER}/${IMAGE_NAME}:latest
-                        """
-                    }
-                }
-                echo '✅ Docker image pushed successfully'
-            }
-        }
-        
-        stage('Deploy Container') {
-            when {
-                branch 'main'
-            }
-            steps {
-                echo '🚀 Deploying container...'
-                script {
-                    sh """
-                        # Stop and remove existing container
+                        echo "Stopping existing container..."
                         docker stop ${CONTAINER_NAME} 2>/dev/null || true
                         docker rm ${CONTAINER_NAME} 2>/dev/null || true
                         
-                        # Run new container
-                        docker run -d \\
-                            --name ${CONTAINER_NAME} \\
-                            -p 8080:8080 \\
-                            --restart unless-stopped \\
-                            ${DOCKER_USER}/${IMAGE_NAME}:latest
+                        echo "Pulling latest image..."
+                        docker pull ${DOCKER_IMAGE} || {
+                            echo "WARNING: Could not pull image. Building locally..."
+                            ./build-docker.sh latest
+                        }
+                        
+                        echo "Starting container..."
+                        docker run -d \
+                            --name ${CONTAINER_NAME} \
+                            -p 8080:8080 \
+                            --restart unless-stopped \
+                            ${DOCKER_IMAGE}
                         
                         echo "Waiting for application to start..."
-                        sleep 15
+                        sleep 10
                         
-                        # Health check with retry
+                        # Health check
                         max_attempts=10
-                        for i in \$(seq 1 \$max_attempts); do
+                        for i in $(seq 1 $max_attempts); do
                             if curl -s --fail http://localhost:8080/actuator/health >/dev/null 2>&1; then
                                 echo "✅ Application is healthy!"
                                 break
                             fi
-                            echo "⏳ Waiting for application... (attempt \$i/\$max_attempts)"
-                            sleep 10
+                            echo "⏳ Waiting for application... (attempt $i/$max_attempts)"
+                            sleep 5
                         done
                         
-                        # Show container logs for debugging
-                        echo "=== Container Logs ==="
-                        docker logs ${CONTAINER_NAME} --tail 20
-                    """
+                        echo "Container status:"
+                        docker ps | grep ${CONTAINER_NAME}
+                        
+                        echo "Application URL: http://localhost:8080"
+                        echo "Health check: http://localhost:8080/actuator/health"
+                        EOF
+                        
+                        chmod +x deploy.sh
+                    '''
+                    archiveArtifacts artifacts: 'deploy.sh', fingerprint: true
                 }
-                echo '🚀 Deployment completed'
+                echo '✅ Deployment script created'
+            }
+        }
+        
+        stage('Test Application') {
+            steps {
+                echo '🧪 Testing application...'
+                script {
+                    sh '''
+                        echo "=== Running tests ==="
+                        if [ -f "mvnw" ]; then
+                            ./mvnw test
+                        else
+                            mvn test
+                        fi
+                    '''
+                }
+                echo '✅ Tests completed'
+            }
+            post {
+                always {
+                    junit '**/target/surefire-reports/**/*.xml'
+                }
             }
         }
     }
@@ -254,51 +296,36 @@ pipeline {
             echo "🔗 Build URL: ${BUILD_URL}"
             
             script {
-                // Clean up test containers
+                // Create summary report
                 sh '''
-                    echo "=== Cleaning up test containers ==="
-                    docker stop test-container 2>/dev/null || true
-                    docker rm test-container 2>/dev/null || true
-                    docker system prune -f 2>/dev/null || true
+                    echo "=== Build Summary ===" > summary.txt
+                    echo "Status: ${currentBuild.currentResult}" >> summary.txt
+                    echo "Build: ${BUILD_NUMBER}" >> summary.txt
+                    echo "Branch: ${BRANCH_NAME}" >> summary.txt
+                    echo "Artifacts created:" >> summary.txt
+                    ls -la target/*.jar 2>/dev/null || echo "No JAR files" >> summary.txt
+                    echo "Test reports: $(find . -name '*test*.xml' | wc -l)" >> summary.txt
                 '''
+                archiveArtifacts artifacts: 'summary.txt', fingerprint: true
                 
-                // Archive test results if they exist
-                junit '**/target/surefire-reports/**/*.xml'
-                
-                // Save Docker logs if container exists
-                sh '''
-                    if docker ps -a | grep -q auditapplication; then
-                        echo "=== Saving container logs ==="
-                        docker logs auditapplication > container.log 2>&1 || true
-                    fi
-                '''
-                
-                // Archive additional artifacts
-                archiveArtifacts artifacts: 'container.log', allowEmptyArchive: true
-                archiveArtifacts artifacts: 'target/*.jar', allowEmptyArchive: true
-                
-                // Clean workspace (optional - keep for debugging)
-                // cleanWs()
+                // Clean workspace
+                cleanWs()
             }
         }
         success {
             echo '🎉 Pipeline completed successfully!'
+            echo '📋 Next steps:'
+            echo '   1. Ensure Docker Desktop is running on Windows'
+            echo '   2. Configure WSL integration in Docker Desktop'
+            echo '   3. Run: ./build-docker.sh ${BUILD_NUMBER}'
+            echo '   4. Run: ./deploy.sh'
         }
         failure {
             echo '❌ Pipeline failed!'
-            
-            script {
-                // Collect failure information
-                sh '''
-                    echo "=== Failure Diagnostics ==="
-                    echo "Docker status:"
-                    docker ps -a 2>/dev/null || echo "Docker not available"
-                    echo "Container logs (if any):"
-                    docker logs auditapplication 2>/dev/null || echo "No container logs"
-                    echo "Recent system logs:"
-                    dmesg | tail -20 2>/dev/null || echo "No system logs"
-                '''
-            }
+            echo '🔧 Troubleshooting steps:'
+            echo '   1. Check Docker Desktop is running'
+            echo '   2. Verify WSL integration in Docker Desktop settings'
+            echo '   3. Try: export DOCKER_HOST=tcp://localhost:2375'
         }
     }
 }
