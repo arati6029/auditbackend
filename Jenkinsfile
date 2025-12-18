@@ -1,6 +1,10 @@
 pipeline {
     agent any
     
+    options {
+        timestamps()
+    }
+    
     tools {
         maven 'M3'
     }
@@ -17,37 +21,40 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
+                echo '🔍 Starting Checkout stage: Cloning repository...'
                 checkout scm
+                echo '✅ Repository cloned successfully'
             }
         }
         
         stage('Setup Docker') {
             steps {
+                echo '🐳 Starting Docker Setup: Cleaning up existing containers...'
                 script {
-                    
                     sh '''
                         docker stop auditapplication || true
                         docker rm auditapplication || true
                         docker system prune -f || true
                     '''
-                    
-                   
                     sh 'docker --version'
                 }
+                echo '✅ Docker setup completed'
             }
         }
         
         stage('Build Application') {
             steps {
+                echo '🔨 Starting Build: Compiling application...'
                 script {
-                    
                     sh 'mvn clean package -DskipTests'
                 }
+                echo '✅ Build completed successfully'
             }
         }
         
         stage('Test') {
             steps {
+                echo '🧪 Starting Tests: Running test suite...'
                 script {
                     sh '''
                         mvn test \
@@ -60,20 +67,24 @@ pipeline {
                             -Dtestcontainers.enabled=false
                     '''
                 }
+                echo '✅ Tests completed successfully'
             }
         }
         
         stage('Build Docker Image') {
             steps {
+                echo '🐳 Building Docker image...'
                 script {
                     sh "docker build -t ${DOCKER_REGISTRY} ."
                     sh "docker tag ${DOCKER_REGISTRY} ${DOCKER_USER}/${IMAGE_NAME}:latest"
                 }
+                echo '✅ Docker image built successfully'
             }
         }
 
         stage('Run Docker Container') {
             steps {
+                echo '🚀 Starting Docker container...'
                 script {
                     // Stop and remove existing container
                     sh "docker stop ${CONTAINER_NAME} || true"
@@ -92,45 +103,26 @@ pipeline {
                     sleep 10
                     
                     // Health check with retry logic
+                    echo '🩺 Checking application health...'
                     sh '''
                         max_attempts=10
                         attempt=1
                         while [ $attempt -le $max_attempts ]; do
                             if curl -s --fail http://localhost:8080/actuator/health > /dev/null 2>&1; then
-                                echo "Application is healthy!"
+                                echo "✅ Application is healthy!"
                                 break
                             fi
-                            echo "Waiting for application to start... (attempt $attempt/$max_attempts)"
+                            echo "⏳ Waiting for application to start... (attempt $attempt/$max_attempts)"
                             sleep 5
                             attempt=$((attempt+1))
                         done
                         
                         if [ $attempt -gt $max_attempts ]; then
-                            echo "Application failed to start within the expected time"
+                            echo "❌ Application failed to start within the expected time"
                             exit 1
                         fi
                     '''
-                }
-            }
-        }
-        
-        stage('Push to Docker Hub') {
-            when {
-                branch 'main' || 'master' || 'origin/master'
-            }
-            steps {
-                script {
-                    withCredentials([usernamePassword(
-                        credentialsId: 'docker-hub-credentials', 
-                        usernameVariable: 'DOCKER_HUB_USER', 
-                        passwordVariable: 'DOCKER_HUB_PASSWORD'
-                    )]) {
-                        sh """
-                            echo ${DOCKER_HUB_PASSWORD} | docker login -u ${DOCKER_HUB_USER} --password-stdin ${REGISTRY}
-                            docker push ${DOCKER_REGISTRY}
-                            docker push ${DOCKER_USER}/${IMAGE_NAME}:latest
-                        """
-                    }
+                    echo '🚀 Container started successfully'
                 }
             }
         }
@@ -138,23 +130,14 @@ pipeline {
     
     post {
         always {
+            echo "🏁 Pipeline execution completed. Status: ${currentBuild.currentResult}"
+            echo "🔗 Build URL: ${BUILD_URL}"
             script {
                 // Archive test results
                 junit '**/target/surefire-reports/**/*.xml'
-                
-                // Archive build artifacts
-                archiveArtifacts 'target/*.jar'
-                
-                // Clean up Docker resources
-                sh """
-                    docker stop ${CONTAINER_NAME} || true
-                    docker rm ${CONTAINER_NAME} || true
-                    docker system prune -f || true
-                """
+                // Clean up workspace
+                cleanWs()
             }
-        }
-        cleanup {
-            cleanWs()
         }
     }
 }
