@@ -120,7 +120,7 @@ pipeline {
         
         stage('Push to Docker Hub') {
             when {
-                branch 'main'
+                branch 'main' || 'master' || 'origin/master'
             }
             steps {
                 script {
