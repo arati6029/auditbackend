@@ -1,20 +1,21 @@
 pipeline {
-    agent { 
-        docker {
-            image 'maven:3.8.4-jdk-11'  // Or your preferred Maven image
-            args '-v /var/run/docker.sock:/var/run/docker.sock'  // Mount Docker socket
-                }
+    agent {
+        node {
+            label 'master'  // Or your specific agent label
+        }
     }
+    
     tools {
         maven 'M3'
     }
+    
     environment {
         REGISTRY = "docker.io"
         DOCKER_USER = "arati6029"
         IMAGE_NAME = "auditapplication-app"
         CONTAINER_NAME = "auditapplication"
         DOCKER_IMAGE = "${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
-        DOCKER_REGISTRY = "${REGISTRY}/${DOCKER_IMAGE}"  // For pushing to Docker Hub
+        DOCKER_REGISTRY = "${REGISTRY}/${DOCKER_IMAGE}"
     }
     
     stages {
@@ -24,9 +25,26 @@ pipeline {
             }
         }
         
-        stage('Build') {
+        stage('Setup Docker') {
             steps {
                 script {
+                    // Clean up any existing containers/images
+                    sh '''
+                        docker stop auditapplication || true
+                        docker rm auditapplication || true
+                        docker system prune -f || true
+                    '''
+                    
+                    // Verify Docker is working
+                    sh 'docker --version'
+                }
+            }
+        }
+        
+        stage('Build Application') {
+            steps {
+                script {
+                    // Using maven tool configured in Jenkins
                     sh 'mvn clean package -DskipTests'
                 }
             }
@@ -36,7 +54,8 @@ pipeline {
             steps {
                 script {
                     sh '''
-                        mvn test -Dspring.profiles.active=test \
+                        mvn test \
+                            -Dspring.profiles.active=test \
                             -Dspring.datasource.url=jdbc:h2:mem:testdb \
                             -Dspring.datasource.driver-class-name=org.h2.Driver \
                             -Dspring.datasource.username=sa \
@@ -44,11 +63,6 @@ pipeline {
                             -Dspring.jpa.database-platform=org.hibernate.dialect.H2Dialect \
                             -Dtestcontainers.enabled=false
                     '''
-                }
-            }
-            post {
-                always {
-                    junit '**/target/surefire-reports/**/*.xml'  // Archive test results
                 }
             }
         }
@@ -65,24 +79,41 @@ pipeline {
         stage('Run Docker Container') {
             steps {
                 script {
-                    // Stop and remove existing container if it exists
+                    // Stop and remove existing container
                     sh "docker stop ${CONTAINER_NAME} || true"
                     sh "docker rm ${CONTAINER_NAME} || true"
                     
-                    // Run the container with environment variables
+                    // Run with proper environment variable handling
                     sh """
                         docker run -d \
                             --name ${CONTAINER_NAME} \
                             -p 8080:8080 \
                             -e SPRING_PROFILES_ACTIVE=prod \
-                            -e SPRING_DATASOURCE_URL=\${SPRING_DATASOURCE_URL} \
-                            -e SPRING_DATASOURCE_USERNAME=\${SPRING_DATASOURCE_USERNAME} \
-                            -e SPRING_DATASOURCE_PASSWORD=\${SPRING_DATASOURCE_PASSWORD} \
                             ${DOCKER_REGISTRY}
                     """
                     
-                    // Health check
-                    sh "sleep 10 && curl --fail http://localhost:8080/actuator/health"
+                    // Wait for container to start
+                    sleep 10
+                    
+                    // Health check with retry logic
+                    sh '''
+                        max_attempts=10
+                        attempt=1
+                        while [ $attempt -le $max_attempts ]; do
+                            if curl -s --fail http://localhost:8080/actuator/health > /dev/null 2>&1; then
+                                echo "Application is healthy!"
+                                break
+                            fi
+                            echo "Waiting for application to start... (attempt $attempt/$max_attempts)"
+                            sleep 5
+                            attempt=$((attempt+1))
+                        done
+                        
+                        if [ $attempt -gt $max_attempts ]; then
+                            echo "Application failed to start within the expected time"
+                            exit 1
+                        fi
+                    '''
                 }
             }
         }
@@ -98,9 +129,11 @@ pipeline {
                         usernameVariable: 'DOCKER_HUB_USER', 
                         passwordVariable: 'DOCKER_HUB_PASSWORD'
                     )]) {
-                        sh "echo ${DOCKER_HUB_PASSWORD} | docker login -u ${DOCKER_HUB_USER} --password-stdin ${REGISTRY}"
-                        sh "docker push ${DOCKER_REGISTRY}"
-                        sh "docker push ${DOCKER_USER}/${IMAGE_NAME}:latest"
+                        sh """
+                            echo ${DOCKER_HUB_PASSWORD} | docker login -u ${DOCKER_HUB_USER} --password-stdin ${REGISTRY}
+                            docker push ${DOCKER_REGISTRY}
+                            docker push ${DOCKER_USER}/${IMAGE_NAME}:latest
+                        """
                     }
                 }
             }
@@ -109,22 +142,23 @@ pipeline {
     
     post {
         always {
-            // Archive test results and logs
-            junit '**/target/surefire-reports/**/*.xml'
-            archiveArtifacts '**/target/*.jar'
-            
-            // Clean up
-            sh "docker stop ${CONTAINER_NAME} || true"
-            sh "docker rm ${CONTAINER_NAME} || true"
+            script {
+                // Archive test results
+                junit '**/target/surefire-reports/**/*.xml'
+                
+                // Archive build artifacts
+                archiveArtifacts 'target/*.jar'
+                
+                // Clean up Docker resources
+                sh """
+                    docker stop ${CONTAINER_NAME} || true
+                    docker rm ${CONTAINER_NAME} || true
+                    docker system prune -f || true
+                """
+            }
+        }
+        cleanup {
             cleanWs()
-        }
-        success {
-            // Send success notification
-            echo 'Pipeline completed successfully!'
-        }
-        failure {
-            // Send failure notification
-            echo 'Pipeline failed!'
         }
     }
 }
