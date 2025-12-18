@@ -5,17 +5,13 @@ pipeline {
         timestamps()
     }
     
-    tools {
-        maven 'M3'
-    }
-    
     environment {
+        // Your environment variables
         REGISTRY = "docker.io"
         DOCKER_USER = "arati6029"
         IMAGE_NAME = "auditapplication-app"
         CONTAINER_NAME = "auditapplication"
         DOCKER_IMAGE = "${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
-        DOCKER_REGISTRY = "${REGISTRY}/${DOCKER_IMAGE}"
     }
     
     stages {
@@ -27,18 +23,23 @@ pipeline {
             }
         }
         
-        stage('Setup Docker') {
+        stage('Setup Environment') {
             steps {
-                echo '🐳 Starting Docker Setup: Cleaning up existing containers...'
                 script {
-                    sh '''
-                        docker stop auditapplication || true
-                        docker rm auditapplication || true
-                        docker system prune -f || true
-                    '''
-                    sh 'docker --version'
+                    // Verify Docker is available
+                    def dockerCmd = isUnix() ? 'docker' : 'docker.exe'
+                    def dockerAvailable = sh(script: "command -v ${dockerCmd} >/dev/null 2>&1", returnStatus: true) == 0
+                    
+                    if (!dockerAvailable) {
+                        error('❌ Docker is not available. Please ensure Docker is installed and in the PATH.')
+                    }
+                    
+                    // Test Docker
+                    docker.withRegistry('https://registry.hub.docker.com', 'docker-hub-credentials') {
+                        sh "docker --version"
+                        sh "docker ps"  // This will fail if Docker daemon is not running
+                    }
                 }
-                echo '✅ Docker setup completed'
             }
         }
         
@@ -71,38 +72,39 @@ pipeline {
             }
         }
         
-        stage('Build Docker Image') {
+        stage('Build and Push Docker Image') {
             steps {
                 echo '🐳 Building Docker image...'
                 script {
-                    sh "docker build -t ${DOCKER_REGISTRY} ."
-                    sh "docker tag ${DOCKER_REGISTRY} ${DOCKER_USER}/${IMAGE_NAME}:latest"
+                    // Build the Docker image
+                    docker.withRegistry('https://registry.hub.docker.com', 'docker-hub-credentials') {
+                        def customImage = docker.build("${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}", ".")
+                        
+                        // Push the image
+                        customImage.push()
+                        customImage.push('latest')
+                    }
                 }
-                echo '✅ Docker image built successfully'
+                echo '✅ Docker image built and pushed successfully'
             }
         }
 
-        stage('Run Docker Container') {
+        stage('Run Container') {
             steps {
                 echo '🚀 Starting Docker container...'
                 script {
-                    // Stop and remove existing container
+                    // Stop and remove any existing container
                     sh "docker stop ${CONTAINER_NAME} || true"
                     sh "docker rm ${CONTAINER_NAME} || true"
                     
-                    // Run with proper environment variable handling
-                    sh """
-                        docker run -d \
-                            --name ${CONTAINER_NAME} \
-                            -p 8080:8080 \
-                            -e SPRING_PROFILES_ACTIVE=prod \
-                            ${DOCKER_REGISTRY}
-                    """
+                    // Run the container
+                    docker.withRegistry('https://registry.hub.docker.com', 'docker-hub-credentials') {
+                        def container = docker.image("${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}").run(
+                            "--name ${CONTAINER_NAME} -p 8080:8080 -e SPRING_PROFILES_ACTIVE=prod"
+                        )
+                    }
                     
-                    // Wait for container to start
-                    sleep 10
-                    
-                    // Health check with retry logic
+                    // Health check
                     echo '🩺 Checking application health...'
                     sh '''
                         max_attempts=10
