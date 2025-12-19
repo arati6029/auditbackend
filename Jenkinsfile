@@ -1,13 +1,14 @@
 pipeline {
     agent any
-    tool {
-        maven 'M3'
-    }
+   
     environment {
         // Docker Hub credentials (configure these in Jenkins credentials store)
         DOCKER_CREDENTIALS = credentials('docker-hub-credentials')
         DOCKER_IMAGE = "arati6029/audit-backend"
         DOCKER_TAG = "${env.BUILD_NUMBER}"
+    }
+    tool {
+        maven 'M3'
     }
 
     stages {
