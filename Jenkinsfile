@@ -8,11 +8,6 @@ pipeline {
         COMPOSE_FILE = 'docker-compose.yml'
     }
 
-    options {
-        // Timeout after 30 minutes
-        timeout(time: 30, unit: 'MINUTES')
-    }
-    
     tools {
         maven 'M3'
     }
