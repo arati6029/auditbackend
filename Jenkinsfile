@@ -39,8 +39,8 @@ pipeline {
                     // Archive the JAR file
                     archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
                     
-                    // Store test results
-                    junit '**/surefire-reports/**/*.xml'
+                    // // Store test results
+                    // junit '**/surefire-reports/**/*.xml'
                 }
             }
         }
