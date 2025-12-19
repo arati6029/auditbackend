@@ -28,23 +28,39 @@ pipeline {
                 }
             }
         }
-        
-       stage('Build and Push Docker Image') {
-    agent any // or specify a label with Docker support
-    steps {
+        stage('Build and Push Docker Image') {
+      environment {
+        DOCKER_IMAGE = "arati6029/audit-backend:${BUILD_NUMBER}"
+        DOCKERFILE_LOCATION = 'Dockerfile'
+        REGISTRY_CREDENTIALS = 'docker-hub-credentials'
+      }
+      steps {
         script {
-            // Use Docker Pipeline plugin
-            docker.withRegistry('https://index.docker.io/v1/', 'docker-hub-credentials') {
-                // Build the image
-                def dockerImage = docker.build("${DOCKER_IMAGE}:${DOCKER_TAG}")
-                
-                // Tag as latest
+            sh 'docker build -t ${DOCKER_IMAGE} .'
+            def dockerImage = docker.image("${DOCKER_IMAGE}")
+            docker.withRegistry('https://index.docker.io/v1/', REGISTRY_CREDENTIALS) {
                 dockerImage.push()
-                dockerImage.push('latest')
             }
+            sh 'docker image rm ${DOCKER_IMAGE} && echo docker-image-removed'
         }
+      }
     }
-}
+//        stage('Build and Push Docker Image') {
+//     agent any // or specify a label with Docker support
+//     steps {
+//         script {
+//             // Use Docker Pipeline plugin
+//             docker.withRegistry('https://index.docker.io/v1/', 'docker-hub-credentials') {
+//                 // Build the image
+//                 def dockerImage = docker.build("${DOCKER_IMAGE}:${DOCKER_TAG}")
+                
+//                 // Tag as latest
+//                 dockerImage.push()
+//                 dockerImage.push('latest')
+//             }
+//         }
+//     }
+// }
     }
     
     post {
