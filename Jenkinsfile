@@ -24,6 +24,11 @@ pipeline {
         stage('Build') {
             steps {
                 script {
+                    // Ensure Maven Wrapper is executable (for Unix-like systems)
+                    if (isUnix()) {
+                        sh 'chmod +x mvnw'
+                    }
+                    
                     // Build the application with Maven Wrapper
                     if (isUnix()) {
                         sh './mvnw clean package -DskipTests'
