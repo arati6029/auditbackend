@@ -48,69 +48,20 @@ pipeline {
             }
         }
 
-        stage('Docker Operations') {
+       stage('Docker Operations') {
             steps {
                 script {
-                    // Create docker group and add Jenkins user if needed
-                    sh '''#!/bin/bash
-                        set +x
-                        
-                        echo "=== Docker Setup ==="
-                        
-                        # Check if we can access Docker
-                        if docker info >/dev/null 2>&1; then
-                            echo "✅ Docker is accessible"
-                        else
-                            echo "⚠️  Cannot access Docker daemon. Trying to fix permissions..."
-                            
-                            # Create docker group if it doesn't exist
-                            if ! grep -q docker /etc/group; then
-                                echo "Creating docker group..."
-                                sudo groupadd docker || true
-                            fi
-                            
-                            # Add Jenkins user to docker group
-                            echo "Adding Jenkins user to docker group..."
-                            sudo usermod -aG docker jenkins || true
-                            
-                            # Update group membership
-                            newgrp docker || true
-                            
-                            # Restart Docker service
-                            echo "Restarting Docker service..."
-                            sudo systemctl restart docker || true
-                            
-                            # Verify
-                            if docker info >/dev/null 2>&1; then
-                                echo "✅ Docker is now accessible"
-                            else
-                                echo "❌ Still cannot access Docker. Please check permissions manually."
-                                echo "Try running: sudo chmod 666 /var/run/docker.sock"
-                                exit 1
-                            fi
-                        fi
-                        
-                        # Show Docker info
-                        docker info
-                    '''
+                    echo "=== Building and Starting Containers ==="
                     
-                    // Now run docker-compose commands
-                    sh '''
-                        echo "=== Running Docker Compose ==="
-                        docker-compose --version
-                        
-                        # Stop and remove any existing containers
-                        echo "Cleaning up existing containers..."
-                        docker-compose down --remove-orphans || true
-                        
-                        # Build and start containers
-                        echo "Building and starting containers..."
-                        docker-compose up --build -d
-                        
-                        # Show running containers
-                        echo "=== Running Containers ==="
-                        docker-compose ps
-                    '''
+                    // Cleanup old containers from previous builds
+                    sh 'docker-compose down --remove-orphans || true'
+                    
+                    // Build the image and start services in detached mode
+                    // Ensure your docker-compose.yml is in the root directory
+                    sh 'docker-compose up --build -d'
+                    
+                    echo "=== Running Containers ==="
+                    sh 'docker ps'
                 }
             }
         }
