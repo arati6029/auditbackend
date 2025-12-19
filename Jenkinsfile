@@ -43,7 +43,7 @@ pipeline {
             }
         }
 
-       stage('Docker Operations') {
+        stage('Docker Operations') {
             steps {
                 script {
                     echo "=== Building and Starting Containers ==="
