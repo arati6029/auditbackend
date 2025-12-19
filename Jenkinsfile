@@ -29,38 +29,22 @@ pipeline {
             }
         }
         
-        stage('Build and Push Docker Image') {
-            // when {
-            //     // Only run this stage if Docker is available
-            //     expression { isUnix() && isDockerAvailable() }
-            // }
-            environment {
-                DOCKER_CONFIG = credentials('docker-hub-credentials')
-            }
-            steps {
-                script {
-                    // Login to Docker Hub
-                    withCredentials([usernamePassword(
-                        credentialsId: 'docker-hub-credentials',
-                        usernameVariable: 'DOCKER_USERNAME',
-                        passwordVariable: 'DOCKER_PASSWORD'
-                    )]) {
-                        sh "echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin"
-                    }
-                    
-                    // Build and tag Docker image
-                    sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
-                    sh "docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest"
-                    
-                    // Push to Docker Hub
-                    sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"
-                    sh "docker push ${DOCKER_IMAGE}:latest"
-                    
-                    // Clean up
-                    sh 'docker logout'
-                }
+       stage('Build and Push Docker Image') {
+    agent any // or specify a label with Docker support
+    steps {
+        script {
+            // Use Docker Pipeline plugin
+            docker.withRegistry('https://index.docker.io/v1/', 'docker-hub-credentials') {
+                // Build the image
+                def dockerImage = docker.build("${DOCKER_IMAGE}:${DOCKER_TAG}")
+                
+                // Tag as latest
+                dockerImage.push()
+                dockerImage.push('latest')
             }
         }
+    }
+}
     }
     
     post {
