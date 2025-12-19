@@ -1,70 +1,91 @@
 pipeline {
     agent any
     
-    tools {
-        maven 'M3'
+    environment {
+        // Docker Hub credentials (configure these in Jenkins credentials store)
+        DOCKER_CREDENTIALS = credentials('docker-hub-credentials')
+        DOCKER_IMAGE = "your-dockerhub-username/audit-backend"
+        DOCKER_TAG = "${env.BUILD_NUMBER}"
     }
-    
+
     stages {
         stage('Checkout') {
             steps {
-                // This will checkout from the configured SCM
+                // Checkout code from SCM
                 checkout scm
-                echo '✅ Repository checked out'
+                
+                // Show current branch and commit
+                sh 'git branch'
+                sh 'git rev-parse HEAD'
             }
         }
         
         stage('Build') {
             steps {
-                sh 'mvn clean package -DskipTests'
-                archiveArtifacts 'target/*.jar'
-                echo '✅ Build completed'
+                script {
+                    // Build the application with Maven
+                    sh './mvnw clean package -DskipTests'
+                    
+                    // Archive the JAR file
+                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                    
+                    // Store test results
+                    junit '**/surefire-reports/**/*.xml'
+                }
+            }
+        }
+        
+        stage('Build and Push Docker Image') {
+            steps {
+                script {
+                    // Login to Docker Hub
+                    sh "echo $DOCKER_CREDENTIALS_PSW | docker login -u $DOCKER_CREDENTIALS_USR --password-stdin"
+                    
+                    // Build Docker image
+                    sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
+                    sh "docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest"
+                    
+                    // Push to Docker Hub
+                    sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                    sh "docker push ${DOCKER_IMAGE}:latest"
+                    
+                    // Clean up
+                    sh 'docker logout'
+                }
             }
         }
         
         stage('Deploy') {
             steps {
-                sh '''
-                    # Stop any existing containers
-                    docker stop audit-app mysql-db 2>/dev/null || true
-                    docker rm audit-app mysql-db 2>/dev/null || true
+                script {
+                    // Stop and remove existing container if running
+                    sh 'docker stop audit-backend || true'
+                    sh 'docker rm audit-backend || true'
                     
-                    # Build Docker image
-                    docker build -t audit-app:latest .
-                    
-                    # Start MySQL
-                    docker run -d --name mysql-db \
-                      -e MYSQL_ROOT_PASSWORD=root \
-                      -e MYSQL_DATABASE=auditDb \
-                      -p 3307:3306 \
-                      mysql:8.0
-                    
-                    echo "Waiting for MySQL..."
-                    sleep 30
-                    
-                    # Start Application
-                    docker run -d --name audit-app \
-                      -p 8081:8080 \
-                      -e SPRING_DATASOURCE_URL=jdbc:mysql://host.docker.internal:3307/auditDb \
-                      -e SPRING_DATASOURCE_USERNAME=root \
-                      -e SPRING_DATASOURCE_PASSWORD=root \
-                      audit-app:latest
-                    
-                    sleep 20
-                    
-                    # Verify
-                    curl -f http://localhost:8081/actuator/health && echo "✅ Deployed!" || docker logs audit-app
-                '''
+                    // Run the new container
+                    sh """
+                    docker run -d \
+                        --name audit-backend \
+                        -p 8080:8080 \
+                        -e SPRING_PROFILES_ACTIVE=prod \
+                        ${DOCKER_IMAGE}:${DOCKER_TAG}
+                    """
+                }
             }
         }
     }
     
     post {
+        always {
+            // Clean up workspace
+            cleanWs()
+        }
         success {
-            echo '🎉 Success! App: http://localhost:8081'
+            echo 'Pipeline completed successfully!'
         }
         failure {
-            echo '❌ Failed! Check logs above.'
+            echo 'Pipeline failed!'
+            // You can add notification here (e.g., email, Slack, etc.)
         }
     }
 }
