@@ -1,5 +1,8 @@
 pipeline {
-    agent any
+    agent {
+        // Use a node with Docker installed and configured
+        label 'docker'  // Make sure you have a node with this label that has Docker installed
+    }
     
     environment {
         DOCKER_IMAGE = "arati6029/audit-backend"
