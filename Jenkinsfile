@@ -45,25 +45,25 @@ pipeline {
             }
         }
         
-        // stage('Build and Push Docker Image') {
-        //     steps {
-        //         script {
-        //             // Login to Docker Hub
-        //             sh "echo $DOCKER_CREDENTIALS_PSW | docker login -u $DOCKER_CREDENTIALS_USR --password-stdin"
+        stage('Build and Push Docker Image') {
+            steps {
+                script {
+                    // Login to Docker Hub
+                    sh "echo $DOCKER_CREDENTIALS_PSW | docker login -u $DOCKER_CREDENTIALS_USR --password-stdin"
                     
-        //             // Build Docker image
-        //             sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
-        //             sh "docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest"
+                    // Build Docker image
+                    sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
+                    sh "docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest"
                     
-        //             // Push to Docker Hub
-        //             sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"
-        //             sh "docker push ${DOCKER_IMAGE}:latest"
+                    // Push to Docker Hub
+                    sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                    sh "docker push ${DOCKER_IMAGE}:latest"
                     
-        //             // Clean up
-        //             sh 'docker logout'
-        //         }
-        //     }
-        // }
+                    // Clean up
+                    sh 'docker logout'
+                }
+            }
+        }
         
         // stage('Deploy') {
         //     steps {
