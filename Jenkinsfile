@@ -1,8 +1,5 @@
 pipeline {
-    agent {
-        // Use a node with Docker installed and configured
-        label 'docker'  // Make sure you have a node with this label that has Docker installed
-    }
+    agent any  // Will use any available agent
     
     environment {
         DOCKER_IMAGE = "arati6029/audit-backend"
@@ -33,14 +30,12 @@ pipeline {
         }
         
         stage('Build and Push Docker Image') {
-            agent {
-                docker {
-                    image 'docker:20.10.16-dind'
-                    args '--privileged -v /var/run/docker.sock:/var/run/docker.sock'
-                }
+            when {
+                // Only run this stage if Docker is available
+                expression { isUnix() && isDockerAvailable() }
             }
             environment {
-                DOCKERHUB_CREDENTIALS = credentials('docker-hub-credentials')
+                DOCKER_CONFIG = credentials('docker-hub-credentials')
             }
             steps {
                 script {
@@ -73,4 +68,16 @@ pipeline {
             cleanWs()
         }
     }
+}
+
+// Helper function to check if Docker is available
+def isDockerAvailable() {
+    try {
+        if (isUnix()) {
+            return sh(script: 'command -v docker >/dev/null 2>&1 && docker --version', returnStatus: true) == 0
+        }
+    } catch (Exception e) {
+        echo "Docker check failed: ${e.message}"
+    }
+    return false
 }
