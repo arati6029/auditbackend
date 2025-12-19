@@ -30,10 +30,10 @@ pipeline {
         }
         
         stage('Build and Push Docker Image') {
-            when {
-                // Only run this stage if Docker is available
-                expression { isUnix() && isDockerAvailable() }
-            }
+            // when {
+            //     // Only run this stage if Docker is available
+            //     expression { isUnix() && isDockerAvailable() }
+            // }
             environment {
                 DOCKER_CONFIG = credentials('docker-hub-credentials')
             }
