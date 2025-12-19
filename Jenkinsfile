@@ -1,21 +1,15 @@
 pipeline {
     agent any
-   
+    
     environment {
-        // Docker Hub credentials (configure these in Jenkins credentials store)
-        DOCKER_CREDENTIALS = credentials('docker-hub-credentials')
         DOCKER_IMAGE = "arati6029/audit-backend"
         DOCKER_TAG = "${env.BUILD_NUMBER}"
     }
-    // Using Maven wrapper (mvnw) which is included in the project
 
     stages {
         stage('Checkout') {
             steps {
-                // Checkout code from SCM
                 checkout scm
-                
-                // Show current branch and commit
                 sh 'git branch'
                 sh 'git rev-parse HEAD'
             }
@@ -24,34 +18,39 @@ pipeline {
         stage('Build') {
             steps {
                 script {
-                    // Ensure Maven Wrapper is executable (for Unix-like systems)
                     if (isUnix()) {
                         sh 'chmod +x mvnw'
-                    }
-                    
-                    // Build the application with Maven Wrapper
-                    if (isUnix()) {
                         sh './mvnw clean package -DskipTests'
                     } else {
                         bat 'mvnw.cmd clean package -DskipTests'
                     }
-                    
-                    // Archive the JAR file
                     archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-                    
-                    // // Store test results
-                    // junit '**/surefire-reports/**/*.xml'
                 }
             }
         }
         
         stage('Build and Push Docker Image') {
+            agent {
+                docker {
+                    image 'docker:20.10.16-dind'
+                    args '--privileged -v /var/run/docker.sock:/var/run/docker.sock'
+                }
+            }
+            environment {
+                DOCKERHUB_CREDENTIALS = credentials('docker-hub-credentials')
+            }
             steps {
                 script {
                     // Login to Docker Hub
-                    sh "echo $DOCKER_CREDENTIALS_PSW | docker login -u $DOCKER_CREDENTIALS_USR --password-stdin"
+                    withCredentials([usernamePassword(
+                        credentialsId: 'docker-hub-credentials',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )]) {
+                        sh "echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin"
+                    }
                     
-                    // Build Docker image
+                    // Build and tag Docker image
                     sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
                     sh "docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest"
                     
@@ -64,38 +63,11 @@ pipeline {
                 }
             }
         }
-        
-        // stage('Deploy') {
-        //     steps {
-        //         script {
-        //             // Stop and remove existing container if running
-        //             sh 'docker stop audit-backend || true'
-        //             sh 'docker rm audit-backend || true'
-                    
-        //             // Run the new container
-        //             sh """
-        //             docker run -d \
-        //                 --name audit-backend \
-        //                 -p 8080:8080 \
-        //                 -e SPRING_PROFILES_ACTIVE=prod \
-        //                 ${DOCKER_IMAGE}:${DOCKER_TAG}
-        //             """
-        //         }
-        //     }
-        // }
     }
     
     post {
         always {
-            // Clean up workspace
             cleanWs()
-        }
-        success {
-            echo 'Pipeline completed successfully!'
-        }
-        failure {
-            echo 'Pipeline failed!'
-            // You can add notification here (e.g., email, Slack, etc.)
         }
     }
 }
