@@ -7,9 +7,7 @@ pipeline {
         DOCKER_IMAGE = "arati6029/audit-backend"
         DOCKER_TAG = "${env.BUILD_NUMBER}"
     }
-    tool {
-        maven 'M3'
-    }
+    // Using Maven wrapper (mvnw) which is included in the project
 
     stages {
         stage('Checkout') {
@@ -26,8 +24,12 @@ pipeline {
         stage('Build') {
             steps {
                 script {
-                    // Build the application with Maven
-                    sh './mvnw clean package -DskipTests'
+                    // Build the application with Maven Wrapper
+                    if (isUnix()) {
+                        sh './mvnw clean package -DskipTests'
+                    } else {
+                        bat 'mvnw.cmd clean package -DskipTests'
+                    }
                     
                     // Archive the JAR file
                     archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
