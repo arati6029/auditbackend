@@ -4,7 +4,7 @@ pipeline {
     environment {
         // Docker Hub credentials (configure these in Jenkins credentials store)
         DOCKER_CREDENTIALS = credentials('docker-hub-credentials')
-        DOCKER_IMAGE = "your-dockerhub-username/audit-backend"
+        DOCKER_IMAGE = "arati6029/audit-backend"
         DOCKER_TAG = "${env.BUILD_NUMBER}"
     }
 
